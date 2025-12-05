@@ -1,0 +1,57 @@
+# LÖVE2D / Lua
+*.love
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Thumbnails
+Thumbs.db
+
+# Editor directories and files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.sublime-*
+
+# OS generated files
+Desktop.ini
+$RECYCLE.BIN/
+
+# Log files
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Compiled Lua
+luac.out
+
+# LÖVE game archives
+*.love
+
+# Build artifacts
+dist/
+build/
+releases/
+
+# Save files (if you implement save/load)
+saves/
+*.sav
+
+# Screenshots
+screenshots/
+*.png
+*.jpg
+*.jpeg
+!assets/**/*.png
+!assets/**/*.jpg
+!assets/**/*.jpeg
+
+# Ignore suit icon PNGs in lib (generated files)
+lib/suit_*.png
