@@ -62,7 +62,7 @@ function love.update(dt)
     flux.update(dt) -- Update tweens and timers
 
     if Game then
-        Game:update()
+        Game:update(dt)
     end
 end
 
@@ -91,6 +91,12 @@ function love.keypressed(key)
 
     if Game then
         Game:handleKeyPressed(key)
+    end
+end
+
+function love.keyreleased(key)
+    if Game then
+        Game:handleKeyReleased(key)
     end
 end
 

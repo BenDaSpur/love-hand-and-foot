@@ -125,7 +125,7 @@ function UI.Renderer.drawPlayingScreen(gameState)
 
     -- Draw controls help for human player (only show during their turn)
     local currentPlayer = gameState:getCurrentPlayer()
-    if currentPlayer.type == "human" then
+    if currentPlayer.type == "human" and not gameState.isRevealingCards then
         love.graphics.setFont(theme.fonts.tiny)
         love.graphics.setColor(theme.colors.textSecondary)
 
@@ -139,6 +139,11 @@ function UI.Renderer.drawPlayingScreen(gameState)
         end
 
         love.graphics.print(helpText, 20, h - 40)
+    end
+
+    -- Draw card reveal animation (if active)
+    if gameState.isRevealingCards and gameState.revealingCards then
+        UI.Renderer.drawCardReveal(gameState.revealingCards, w, h)
     end
 end
 
@@ -415,12 +420,12 @@ function UI.Renderer.drawPlayerHand(player, x, y, w, h, highlightedIndex)
     for i, card in ipairs(player.hand) do
         local offsetY = card.selected and theme.card.selectedOffset or 0
         local isHighlighted = (highlightedIndex == i) or card.highlighted
-        UI.Renderer.drawCard(card, cardX, y + offsetY, card.selected, isHighlighted)
+        UI.Renderer.drawCard(card, cardX, y + offsetY, card.selected, isHighlighted, 1.0, player)
         cardX = cardX + theme.card.width + spacing
     end
 end
 
-function UI.Renderer.drawCard(card, x, y, selected, highlighted, scale)
+function UI.Renderer.drawCard(card, x, y, selected, highlighted, scale, player)
     scale = scale or 1.0
 
     -- Apply animation properties
@@ -432,6 +437,13 @@ function UI.Renderer.drawCard(card, x, y, selected, highlighted, scale)
     local w = theme.card.width * animScale
     local h = theme.card.height * animScale
     local cornerRadius = theme.card.cornerRadius * animScale
+
+    -- Check if this card has 3+ total (in hand + melds)
+    local hasMeldableSet = false
+    if player and not card.isWild then
+        local rankTotal = player:countRankTotal(card.rank)
+        hasMeldableSet = rankTotal >= 3
+    end
 
     -- Determine border color based on suit (wilds use suit color too)
     local borderColor = theme.colors.cardBlack
@@ -473,13 +485,33 @@ function UI.Renderer.drawCard(card, x, y, selected, highlighted, scale)
                           theme.colors.cardBackground[3], animAlpha)
     theme.drawRoundedRect("fill", x, y, w, h, cornerRadius)
 
+    -- Draw meldable indicator - thin glow line at bottom
+    if hasMeldableSet then
+        local lineThickness = 3 * animScale
+        local lineY = y + h - cornerRadius - lineThickness
+
+        -- Draw glowing line with multiple layers
+        for i = 1, 4 do
+            local alpha = (0.3 - i * 0.05) * animAlpha
+            local offset = i * 2 * animScale
+            love.graphics.setColor(theme.colors.neonGreen[1], theme.colors.neonGreen[2],
+                                  theme.colors.neonGreen[3], alpha)
+            love.graphics.rectangle("fill", x + cornerRadius - offset, lineY - offset,
+                                   w - cornerRadius * 2 + offset * 2, lineThickness + offset * 2)
+        end
+    end
+
     -- Draw refined border
     love.graphics.setColor(borderColor[1], borderColor[2], borderColor[3], animAlpha)
     love.graphics.setLineWidth(theme.card.borderWidth)
     theme.drawRoundedRect("line", x, y, w, h, cornerRadius)
     love.graphics.setLineWidth(1)
 
-    -- Draw rank and suit
+    -- Draw rank and suit (scale fonts for larger cards)
+    local isLarge = animScale > 1.5
+    local cornerFont = isLarge and theme.fonts.title or theme.fonts.large
+    local centerFont = isLarge and love.graphics.newFont(48 * animScale) or theme.fonts.title
+
     love.graphics.setFont(theme.fonts.medium)
     local rankStr = Card.RANK_DISPLAY[card.rank] or card.rank
 
@@ -488,39 +520,39 @@ function UI.Renderer.drawCard(card, x, y, selected, highlighted, scale)
         love.graphics.setColor(borderColor[1], borderColor[2], borderColor[3], animAlpha)
 
         -- Draw simple "J" in top-left corner
-        love.graphics.setFont(theme.fonts.large)
-        love.graphics.print("J", x + 12, y + 10)
+        love.graphics.setFont(cornerFont)
+        love.graphics.print("J", x + 12 * animScale, y + 10 * animScale)
 
         -- Draw simple "J" in bottom-right corner
         love.graphics.push()
-        love.graphics.translate(x + w - 12, y + h - 10)
+        love.graphics.translate(x + w - 12 * animScale, y + h - 10 * animScale)
         love.graphics.rotate(math.pi)
         love.graphics.print("J", 0, 0)
         love.graphics.pop()
 
         -- Draw clean centered asterisk symbol
-        love.graphics.setFont(theme.fonts.title)
-        love.graphics.printf("*", x + 5, y + h/2 - 20, w - 10, "center")
+        love.graphics.setFont(centerFont)
+        love.graphics.printf("*", x + 5, y + h/2 - 20 * animScale, w - 10, "center")
     else
         -- Regular cards (including 2s which have suits)
-        -- Draw rank in corners with extra spacing to avoid border overlap
+        -- Draw rank in corners with scaling
         love.graphics.setColor(borderColor[1], borderColor[2], borderColor[3], animAlpha)
-        love.graphics.setFont(theme.fonts.large)
-        love.graphics.print(rankStr, x + 12, y + 10)
+        love.graphics.setFont(cornerFont)
+        love.graphics.print(rankStr, x + 12 * animScale, y + 10 * animScale)
 
-        -- Bottom-right rank (with extra padding to avoid border overlap)
+        -- Bottom-right rank (with scaling)
         love.graphics.push()
-        love.graphics.translate(x + w - 12, y + h - 10)
+        love.graphics.translate(x + w - 12 * animScale, y + h - 10 * animScale)
         love.graphics.rotate(math.pi)
         love.graphics.print(rankStr, 0, 0)
         love.graphics.pop()
 
-        -- Draw suit icon (center only, smaller size)
+        -- Draw suit icon (center only, scaled for large cards)
         if card.suit and theme.suitIcons and theme.suitIcons[card.suit] then
             local icon = theme.suitIcons[card.suit]
 
-            -- Center suit icon (smaller, cleaner)
-            local centerIconSize = 35 * animScale
+            -- Center suit icon (scaled appropriately)
+            local centerIconSize = (isLarge and 60 or 35) * animScale
             local centerSx = centerIconSize / icon:getWidth()
             local centerSy = centerIconSize / icon:getHeight()
 
@@ -642,6 +674,30 @@ function UI.Renderer.drawGameEndScreen(gameState)
         love.graphics.printf(string.format("%s wins with %d points!",
             gameState.winner.name, gameState.winner.score),
             0, Config.windowHeight / 2 - 20, Config.windowWidth, "center")
+    end
+end
+
+function UI.Renderer.drawCardReveal(cards, screenW, screenH)
+    -- Draw dark overlay
+    love.graphics.setColor(0, 0, 0, 0.7)
+    love.graphics.rectangle("fill", 0, 0, screenW, screenH)
+
+    -- Draw "Cards Drawn" text
+    love.graphics.setColor(theme.colors.neonCyan)
+    love.graphics.setFont(theme.fonts.title)
+    love.graphics.printf("Cards Drawn", 0, screenH / 2 - 120, screenW, "center")
+
+    -- Draw cards in center, side by side
+    local centerX = screenW / 2
+    local centerY = screenH / 2
+    local cardSpacing = 20
+
+    for i, card in ipairs(cards) do
+        local offsetX = (i - 1.5) * (theme.card.width * (card.animScale or 1) + cardSpacing)
+        local cardX = centerX + offsetX - (theme.card.width * (card.animScale or 1)) / 2
+        local cardY = centerY - (theme.card.height * (card.animScale or 1)) / 2
+
+        UI.Renderer.drawCard(card, cardX, cardY, false, false, card.animScale or 1)
     end
 end
 

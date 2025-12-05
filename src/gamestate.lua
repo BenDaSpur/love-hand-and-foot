@@ -36,7 +36,7 @@ function GameState.new(numPlayers, seed)
     -- Action log
     self.actionLog = {}
     self.maxLogEntries = 20
-    self.actionLogCollapsed = false
+    self.actionLogCollapsed = true  -- Start minimized by default
 
     -- AI turn timing
     self.aiTurnTimer = 0
@@ -48,6 +48,14 @@ function GameState.new(numPlayers, seed)
 
     -- Keyboard navigation
     self.highlightedCardIndex = nil -- Index of card highlighted by arrow keys
+    self.keyRepeatTimer = 0 -- Timer for key repeat
+    self.keyRepeatDelay = 0.5 -- Initial delay before repeat starts
+    self.keyRepeatRate = 0.1 -- Time between repeats
+    self.heldKey = nil -- Currently held key
+
+    -- Card reveal animation
+    self.revealingCards = nil  -- Cards being revealed in center of screen
+    self.isRevealingCards = false  -- Animation in progress
 
     return self
 end
@@ -173,29 +181,85 @@ function GameState:drawFromDeck()
 
     -- Draw 2 cards
     local cards = self.deck:drawCards(2)
-    player:addCardsToHand(cards)
 
-    self.hasDrawnThisTurn = true
-    self.turnPhase = "meld"
-
-    -- Highlight newly drawn cards with subtle fade-in animation
-    player.newlyDrawnCardIndices = {}
-    for i = #player.hand - #cards + 1, #player.hand do
-        table.insert(player.newlyDrawnCardIndices, i)
-        if player.hand[i] then
-            local card = player.hand[i]
-            card.highlighted = true
-
-            -- Subtle fade-in animation
-            card.animAlpha = 0
-            card.animScale = 0.8
-            flux.to(card, 0.3, { animAlpha = 1.0, animScale = 1.0 }):ease("quartout")
-        end
+    -- Only show reveal animation for human player
+    if player.type == "human" then
+        -- Start card reveal animation
+        self:startCardReveal(cards, player)
+    else
+        -- For AI, just add cards directly
+        player:addCardsToHand(cards)
+        self.hasDrawnThisTurn = true
+        self.turnPhase = "meld"
     end
 
     self:logAction(string.format("%s drew 2 cards from deck", player.name))
 
     return true
+end
+
+function GameState:startCardReveal(cards, player)
+    -- Set up reveal state
+    self.revealingCards = cards
+    self.isRevealingCards = true
+
+    -- Initialize cards for animation (start from deck position, invisible)
+    for _, card in ipairs(cards) do
+        card.animX = 0
+        card.animY = 0
+        card.animScale = 0.5
+        card.animAlpha = 0
+    end
+
+    -- Animate cards to center of screen (large)
+    local delay = 0
+    for _, card in ipairs(cards) do
+        flux.to(card, 0.4, { animScale = 1.8, animAlpha = 1.0 })
+            :delay(delay)
+            :ease("backout")
+        delay = delay + 0.1
+    end
+
+    -- After 1.5 seconds, move cards to hand
+    flux.to({}, 1.5, {}):oncomplete(function()
+        self:finishCardReveal(player)
+    end)
+end
+
+function GameState:finishCardReveal(player)
+    if not self.revealingCards then return end
+
+    -- Store the cards before clearing state
+    local cardsToAdd = self.revealingCards
+
+    -- Set each card to large scale before adding to hand
+    for _, card in ipairs(cardsToAdd) do
+        card.animScale = 1.8
+        card.animAlpha = 1.0
+        card.animX = 0
+        card.animY = 0
+    end
+
+    -- Clear reveal state FIRST to hide the overlay
+    self.revealingCards = nil
+    self.isRevealingCards = false
+
+    -- Add cards to hand (they will be sorted)
+    for _, card in ipairs(cardsToAdd) do
+        player:addCardsToHand({card})
+    end
+
+    -- Transition to meld phase
+    self.hasDrawnThisTurn = true
+    self.turnPhase = "meld"
+
+    -- Animate the specific cards back to normal size
+    -- We track them by reference, not index, since sorting moved them
+    for _, card in ipairs(cardsToAdd) do
+        flux.to(card, 0.3, {
+            animScale = 1.0
+        }):ease("quadout")
+    end
 end
 
 function GameState:canUnlockDiscard()
@@ -384,8 +448,20 @@ function GameState:scheduleAiAction(actionType, delay)
     end)
 end
 
-function GameState:update()
+function GameState:update(dt)
     -- Flux timers are updated in main.lua love.update()
+
+    -- Handle key repeat for arrow keys
+    if self.heldKey and not self.isRevealingCards then
+        self.keyRepeatTimer = self.keyRepeatTimer + (dt or 0)
+
+        local threshold = self.keyRepeatTimer < self.keyRepeatDelay and self.keyRepeatDelay or self.keyRepeatRate
+
+        if self.keyRepeatTimer >= threshold then
+            self.keyRepeatTimer = self.keyRepeatTimer - threshold
+            self:handleArrowKey(self.heldKey)
+        end
+    end
 end
 
 function GameState:executeAiAction(player, actionType)
@@ -539,6 +615,11 @@ function GameState:handleMouseReleased(x, y, button)
 end
 
 function GameState:handleKeyPressed(key)
+    -- Disable input during card reveal animation
+    if self.isRevealingCards then
+        return
+    end
+
     if self.phase == "roundEnd" then
         if key == "space" or key == "return" then
             self.phase = "setup"
@@ -557,23 +638,10 @@ function GameState:handleKeyPressed(key)
     end
 
     -- Arrow key navigation (works in all phases)
-    if key == "left" then
-        if #currentPlayer.hand > 0 then
-            if self.highlightedCardIndex == nil then
-                self.highlightedCardIndex = 1
-            else
-                self.highlightedCardIndex = math.max(1, self.highlightedCardIndex - 1)
-            end
-        end
-        return
-    elseif key == "right" then
-        if #currentPlayer.hand > 0 then
-            if self.highlightedCardIndex == nil then
-                self.highlightedCardIndex = 1
-            else
-                self.highlightedCardIndex = math.min(#currentPlayer.hand, self.highlightedCardIndex + 1)
-            end
-        end
+    if key == "left" or key == "right" then
+        self.heldKey = key
+        self.keyRepeatTimer = 0
+        self:handleArrowKey(key)
         return
     elseif key == "space" and self.highlightedCardIndex then
         -- Toggle selection on highlighted card (works in meld and discard phases)
@@ -691,6 +759,36 @@ function GameState:handleKeyPressed(key)
             else
                 self:logAction("Select a card to discard first")
             end
+        end
+    end
+end
+
+function GameState:handleArrowKey(key)
+    local currentPlayer = self:getCurrentPlayer()
+    if currentPlayer.type ~= "human" or #currentPlayer.hand == 0 then
+        return
+    end
+
+    if key == "left" then
+        if self.highlightedCardIndex == nil then
+            self.highlightedCardIndex = 1
+        else
+            self.highlightedCardIndex = math.max(1, self.highlightedCardIndex - 1)
+        end
+    elseif key == "right" then
+        if self.highlightedCardIndex == nil then
+            self.highlightedCardIndex = 1
+        else
+            self.highlightedCardIndex = math.min(#currentPlayer.hand, self.highlightedCardIndex + 1)
+        end
+    end
+end
+
+function GameState:handleKeyReleased(key)
+    if key == "left" or key == "right" then
+        if self.heldKey == key then
+            self.heldKey = nil
+            self.keyRepeatTimer = 0
         end
     end
 end

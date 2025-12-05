@@ -237,4 +237,25 @@ function Player:__tostring()
     return string.format("%s (%s) - Score: %d", self.name, self.type, self.score)
 end
 
+function Player:countRankTotal(rank)
+    -- Count cards of a specific rank in hand + melds
+    local count = 0
+
+    -- Count in hand
+    for _, card in ipairs(self.hand) do
+        if card.rank == rank then
+            count = count + 1
+        end
+    end
+
+    -- Count in melds
+    for _, meld in ipairs(self.melds) do
+        if meld.rank == rank then
+            count = count + #meld.cards
+        end
+    end
+
+    return count
+end
+
 return Player
